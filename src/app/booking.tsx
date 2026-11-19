@@ -1,6 +1,6 @@
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { createElement, useState } from 'react';
 
 import {
   StyleSheet,
@@ -287,6 +287,82 @@ const serviceFields: Record<string, ServiceField[]> = {
   ],
 };
 
+// Get today's date using local time, not UTC.
+const getTodayLocalDate = () => {
+  const today = new Date();
+
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+};
+
+// Convert DD/MM/YYYY to YYYY-MM-DD for the browser date input.
+const toBrowserDate = (date: string) => {
+  if (!date) return '';
+
+  const parts = date.split('/');
+
+  if (parts.length !== 3) return '';
+
+  const [day, month, year] = parts;
+
+  return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+};
+
+// Convert 24-hour time to the existing booking format.
+const toDisplayTime = (time: string) => {
+  if (!time) return '';
+
+  const [hoursString, minutesString] = time.split(':');
+
+  const hours = Number(hoursString);
+  const minutes = Number(minutesString);
+
+  if (
+    !Number.isInteger(hours) ||
+    !Number.isInteger(minutes) ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return '';
+  }
+
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0);
+
+  return date.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+// Convert existing display time to browser time format.
+const toBrowserTime = (time: string) => {
+  if (!time) return '';
+
+  const match = time.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+
+  if (!match) return '';
+
+  let hours = Number(match[1]);
+  const minutes = match[2];
+  const period = match[3].toUpperCase();
+
+  if (period === 'PM' && hours !== 12) {
+    hours += 12;
+  }
+
+  if (period === 'AM' && hours === 12) {
+    hours = 0;
+  }
+
+  return `${String(hours).padStart(2, '0')}:${minutes}`;
+};
+
 export default function BookingScreen() {
   const router = useRouter();
 
@@ -331,6 +407,9 @@ export default function BookingScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
 
+  // Booking submission state
+  const [submitting, setSubmitting] = useState(false);
+
   const handleChange = (key: string, value: string) => {
     setFormData((previous) => ({
       ...previous,
@@ -338,28 +417,48 @@ export default function BookingScreen() {
     }));
   };
 
-  // Load saved addresses when the customer opens the selector
-  const handleOpenSavedAddresses = async () => {
-    await auth.authStateReady();
-
-    const currentUser = auth.currentUser;
-
-    if (!currentUser) {
-      Alert.alert(
-        'Login Required',
-        'Please login to use your saved addresses.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Login',
-            onPress: () => router.push('/auth'),
-          },
-        ]
-      );
-      return;
+  // Platform-compatible messages
+  const showMessage = (title: string, message: string) => {
+    if (Platform.OS === 'web') {
+      window.alert(`${title}\n\n${message}`);
+    } else {
+      Alert.alert(title, message);
     }
+  };
 
+  // Load saved addresses
+  const handleOpenSavedAddresses = async () => {
     try {
+      await auth.authStateReady();
+
+      const currentUser = auth.currentUser;
+
+      if (!currentUser) {
+        if (Platform.OS === 'web') {
+          const shouldLogin = window.confirm(
+            'Please login to use your saved addresses.\n\nWould you like to login now?'
+          );
+
+          if (shouldLogin) {
+            router.push('/auth');
+          }
+        } else {
+          Alert.alert(
+            'Login Required',
+            'Please login to use your saved addresses.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Login',
+                onPress: () => router.push('/auth'),
+              },
+            ]
+          );
+        }
+
+        return;
+      }
+
       setLoadingAddresses(true);
       setShowSavedAddresses(true);
 
@@ -371,7 +470,7 @@ export default function BookingScreen() {
 
       setShowSavedAddresses(false);
 
-      Alert.alert(
+      showMessage(
         'Error',
         'Unable to load your saved addresses. Please try again.'
       );
@@ -380,7 +479,7 @@ export default function BookingScreen() {
     }
   };
 
-  // Apply selected saved address to booking form
+  // Apply selected saved address
   const handleSelectSavedAddress = (address: SavedAddress) => {
     setDistrict(address.district);
     setCity(address.city);
@@ -398,12 +497,12 @@ export default function BookingScreen() {
     setShowSavedAddresses(false);
   };
 
-  // Clear selected address indicator when the customer edits location manually
+  // Clear selected address indicator
   const clearSelectedAddress = () => {
     setSelectedAddressId('');
   };
 
-  // Date picker
+  // Android / iOS date picker
   const handleDateChange = (_event: any, date?: Date) => {
     setShowDatePicker(Platform.OS === 'ios');
 
@@ -416,7 +515,7 @@ export default function BookingScreen() {
     }
   };
 
-  // Time picker
+  // Android / iOS time picker
   const handleTimeChange = (_event: any, time?: Date) => {
     setShowTimePicker(Platform.OS === 'ios');
 
@@ -432,8 +531,35 @@ export default function BookingScreen() {
     }
   };
 
-  // Form submission, validation and storage
+  // Browser date picker
+  const handleWebDateChange = (value: string) => {
+    if (!value) {
+      handleChange('preferredDate', '');
+      return;
+    }
+
+    const [year, month, day] = value.split('-');
+
+    handleChange(
+      'preferredDate',
+      `${day}/${month}/${year}`
+    );
+  };
+
+  // Browser time picker
+  const handleWebTimeChange = (value: string) => {
+    if (!value) {
+      handleChange('preferredTime', '');
+      return;
+    }
+
+    handleChange('preferredTime', toDisplayTime(value));
+  };
+
+  // Booking submission
   const handleSubmit = async () => {
+    if (submitting) return;
+
     const commonFields = [
       formData.name,
       district,
@@ -462,14 +588,27 @@ export default function BookingScreen() {
     }
 
     const isEmpty = requiredFields.some(
-      (value) => !value.trim()
+      (value) => !String(value).trim()
     );
 
     if (isEmpty) {
-      Alert.alert(
+      showMessage(
         'Missing Information',
         'Please fill in all required fields before continuing.'
       );
+
+      return;
+    }
+
+    // Validate selected date
+    const selectedDateValue = toBrowserDate(formData.preferredDate);
+
+    if (!selectedDateValue || selectedDateValue < getTodayLocalDate()) {
+      showMessage(
+        'Invalid Date',
+        'Please select today or a future date.'
+      );
+
       return;
     }
 
@@ -505,6 +644,8 @@ export default function BookingScreen() {
     };
 
     try {
+      setSubmitting(true);
+
       await auth.authStateReady();
 
       const currentUser = auth.currentUser;
@@ -534,10 +675,12 @@ export default function BookingScreen() {
     } catch (error) {
       console.log('Booking submission error:', error);
 
-      Alert.alert(
+      showMessage(
         'Error',
         'Your request could not be saved. Please try again.'
       );
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -646,6 +789,7 @@ export default function BookingScreen() {
                   ? '✓ Saved Address Selected'
                   : 'Choose a Saved Address'}
               </Text>
+
               <Text style={styles.savedAddressArrow}>›</Text>
             </Pressable>
 
@@ -699,44 +843,93 @@ export default function BookingScreen() {
           {/* Preferred Date */}
           <Text style={styles.label}>Preferred Date</Text>
 
-          <Pressable
-            style={styles.pickerButton}
-            onPress={() => setShowDatePicker(true)}
-          >
-            <Text style={styles.pickerText}>
-              {formData.preferredDate || '📅 Select a date'}
-            </Text>
-          </Pressable>
+          {Platform.OS === 'web' ? (
+            createElement('input', {
+              type: 'date',
+              value: toBrowserDate(formData.preferredDate),
+              min: getTodayLocalDate(),
+              onChange: (event: any) => {
+                handleWebDateChange(event.target.value);
+              },
+              style: {
+                width: '100%',
+                height: '48px',
+                padding: '10px',
+                border: '1px solid #EAD8C9',
+                borderRadius: '10px',
+                backgroundColor: '#FFF1E5',
+                color: '#392D28',
+                fontSize: '15px',
+                boxSizing: 'border-box',
+                marginBottom: '12px',
+              },
+            })
+          ) : (
+            <>
+              <Pressable
+                style={styles.pickerButton}
+                onPress={() => setShowDatePicker(true)}
+              >
+                <Text style={styles.pickerText}>
+                  {formData.preferredDate || '📅 Select a date'}
+                </Text>
+              </Pressable>
 
-          {showDatePicker && (
-            <DateTimePicker
-              value={selectedDate}
-              mode="date"
-              display="default"
-              minimumDate={new Date()}
-              onChange={handleDateChange}
-            />
+              {showDatePicker && (
+                <DateTimePicker
+                  value={selectedDate}
+                  mode="date"
+                  display="default"
+                  minimumDate={new Date()}
+                  onChange={handleDateChange}
+                />
+              )}
+            </>
           )}
 
           {/* Preferred Time */}
           <Text style={styles.label}>Preferred Time</Text>
 
-          <Pressable
-            style={styles.pickerButton}
-            onPress={() => setShowTimePicker(true)}
-          >
-            <Text style={styles.pickerText}>
-              {formData.preferredTime || '🕒 Select a time'}
-            </Text>
-          </Pressable>
+          {Platform.OS === 'web' ? (
+            createElement('input', {
+              type: 'time',
+              value: toBrowserTime(formData.preferredTime),
+              onChange: (event: any) => {
+                handleWebTimeChange(event.target.value);
+              },
+              style: {
+                width: '100%',
+                height: '48px',
+                padding: '10px',
+                border: '1px solid #EAD8C9',
+                borderRadius: '10px',
+                backgroundColor: '#FFF1E5',
+                color: '#392D28',
+                fontSize: '15px',
+                boxSizing: 'border-box',
+                marginBottom: '12px',
+              },
+            })
+          ) : (
+            <>
+              <Pressable
+                style={styles.pickerButton}
+                onPress={() => setShowTimePicker(true)}
+              >
+                <Text style={styles.pickerText}>
+                  {formData.preferredTime || '🕒 Select a time'}
+                </Text>
+              </Pressable>
 
-          {showTimePicker && (
-            <DateTimePicker
-              value={selectedTime}
-              mode="time"
-              display="default"
-              onChange={handleTimeChange}
-            />
+              {showTimePicker && (
+                <DateTimePicker
+                  value={selectedTime}
+                  mode="time"
+                  display="default"
+                  onChange={handleTimeChange}
+                />
+              )}
+            </>
           )}
 
           {/* Optional Requirements */}
@@ -793,10 +986,23 @@ export default function BookingScreen() {
 
         {/* Continue Button */}
         <Pressable
-          style={styles.bookButton}
+          style={[
+            styles.bookButton,
+            submitting && styles.disabledButton,
+          ]}
           onPress={handleSubmit}
+          disabled={submitting}
         >
-          <Text style={styles.bookButtonText}>Continue</Text>
+          {submitting ? (
+            <View style={styles.buttonLoading}>
+              <ActivityIndicator color="#FFFFFF" />
+              <Text style={styles.bookButtonText}>
+                Please wait...
+              </Text>
+            </View>
+          ) : (
+            <Text style={styles.bookButtonText}>Continue</Text>
+          )}
         </Pressable>
 
       </View>
@@ -1075,6 +1281,17 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 17,
     fontWeight: 'bold',
+  },
+
+  disabledButton: {
+    opacity: 0.7,
+  },
+
+  buttonLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
   },
 
   modalOverlay: {
