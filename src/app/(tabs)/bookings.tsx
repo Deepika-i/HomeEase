@@ -165,6 +165,56 @@ const formatAmount = (amount: number | undefined) => {
   return `₹${Number(amount || 0).toLocaleString('en-IN')}`;
 };
 
+// ---------------------------------------------------------------
+// Cross-platform dialogs.
+// Alert.alert with buttons does NOT work on web (Vercel), so we use
+// window.confirm / window.alert there and the native Alert on mobile.
+// ---------------------------------------------------------------
+type ConfirmOptions = {
+  title: string;
+  message: string;
+  confirmText?: string;
+  cancelText?: string;
+  destructive?: boolean;
+  onConfirm: () => void | Promise<void>;
+};
+
+const confirmAction = ({
+  title,
+  message,
+  confirmText = 'OK',
+  cancelText = 'Cancel',
+  destructive = false,
+  onConfirm,
+}: ConfirmOptions) => {
+  if (Platform.OS === 'web') {
+    if (window.confirm(`${title}\n\n${message}`)) {
+      void onConfirm();
+    }
+    return;
+  }
+
+  Alert.alert(title, message, [
+    { text: cancelText, style: 'cancel' },
+    {
+      text: confirmText,
+      style: destructive ? 'destructive' : 'default',
+      onPress: () => {
+        void onConfirm();
+      },
+    },
+  ]);
+};
+
+// Simple one-button message that also works on web
+const showMessage = (title: string, message: string) => {
+  if (Platform.OS === 'web') {
+    window.alert(`${title}\n\n${message}`);
+  } else {
+    Alert.alert(title, message);
+  }
+};
+
 // Escape text so it is safe inside the PDF HTML
 const escapeHtml = (text: unknown) =>
   String(text ?? '')
@@ -390,7 +440,7 @@ export default function BookingsScreen() {
     } catch (error) {
       console.log('Loading bookings error:', error);
 
-      Alert.alert(
+      showMessage(
         'Error',
         'Unable to load your bookings. Please try again.'
       );
@@ -441,7 +491,7 @@ export default function BookingsScreen() {
       booking.status !== 'Approved' ||
       booking.quotationStatus !== 'Sent'
     ) {
-      Alert.alert(
+      showMessage(
         'Quotation Unavailable',
         'This quotation has already been processed or is no longer available.'
       );
@@ -450,223 +500,188 @@ export default function BookingsScreen() {
       return;
     }
 
-    Alert.alert(
-      response === 'Accepted'
-        ? 'Accept Quotation'
-        : 'Reject Quotation',
+    confirmAction({
+      title:
+        response === 'Accepted'
+          ? 'Accept Quotation'
+          : 'Reject Quotation',
+      message:
+        response === 'Accepted'
+          ? `Are you sure you want to accept this quotation for ${formatAmount(booking.quotation.totalAmount)}?`
+          : 'Are you sure you want to reject this quotation? The admin may send you a revised quotation.',
+      confirmText: response === 'Accepted' ? 'Accept' : 'Reject',
+      destructive: response === 'Rejected',
+      onConfirm: async () => {
+        try {
+          setRespondingQuotationId(booking.id);
 
-      response === 'Accepted'
-        ? `Are you sure you want to accept this quotation for ${formatAmount(booking.quotation.totalAmount)}?`
-        : 'Are you sure you want to reject this quotation? The admin may send you a revised quotation.',
+          await auth.authStateReady();
 
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: response === 'Accepted' ? 'Accept' : 'Reject',
-          style: response === 'Rejected' ? 'destructive' : 'default',
+          const user = auth.currentUser;
 
-          onPress: async () => {
-            try {
-              setRespondingQuotationId(booking.id);
+          if (!user) {
+            router.replace('/auth');
+            return;
+          }
 
-              await auth.authStateReady();
+          const latestBooking = bookings.find(
+            (item) => item.id === booking.id
+          );
 
-              const user = auth.currentUser;
+          if (
+            !latestBooking ||
+            latestBooking.quotationStatus !== 'Sent'
+          ) {
+            showMessage(
+              'Quotation Unavailable',
+              'This quotation has already received a response.'
+            );
 
-              if (!user) {
-                router.replace('/auth');
-                return;
-              }
+            await loadBookings();
+            return;
+          }
 
-              const latestBooking = bookings.find(
-                (item) => item.id === booking.id
-              );
+          await updateUserBooking(user.uid, booking.id, {
+            quotationStatus: response,
+            quotationResponseAt: new Date().toISOString(),
+          });
 
-              if (
-                !latestBooking ||
-                latestBooking.quotationStatus !== 'Sent'
-              ) {
-                Alert.alert(
-                  'Quotation Unavailable',
-                  'This quotation has already received a response.'
-                );
+          await loadBookings();
 
-                await loadBookings();
-                return;
-              }
+          showMessage(
+            response === 'Accepted'
+              ? 'Quotation Accepted'
+              : 'Quotation Rejected',
+            response === 'Accepted'
+              ? 'You have successfully accepted the quotation. The admin will be informed.'
+              : 'You have rejected the quotation. The admin can now prepare a revised quotation.'
+          );
+        } catch (error) {
+          console.log('Quotation response error:', error);
 
-              await updateUserBooking(
-                user.uid,
-                booking.id,
-                {
-                  quotationStatus: response,
-                  quotationResponseAt: new Date().toISOString(),
-                }
-              );
-
-              await loadBookings();
-
-              Alert.alert(
-                response === 'Accepted'
-                  ? 'Quotation Accepted'
-                  : 'Quotation Rejected',
-
-                response === 'Accepted'
-                  ? 'You have successfully accepted the quotation. The admin will be informed.'
-                  : 'You have rejected the quotation. The admin can now prepare a revised quotation.'
-              );
-
-            } catch (error) {
-              console.log(
-                'Quotation response error:',
-                error
-              );
-
-              Alert.alert(
-                'Error',
-                'Unable to submit your response. Please try again. If the problem continues, check your Firestore security rules.'
-              );
-            } finally {
-              setRespondingQuotationId(null);
-            }
-          },
-        },
-      ]
-    );
+          showMessage(
+            'Error',
+            'Unable to submit your response. Please try again. If the problem continues, check your Firestore security rules.'
+          );
+        } finally {
+          setRespondingQuotationId(null);
+        }
+      },
+    });
   };
 
   const handleCancelBooking = (id: string) => {
-    Alert.alert(
-      'Cancel Booking',
-      'Are you sure you want to cancel this booking?',
-      [
-        {
-          text: 'No',
-          style: 'cancel',
-        },
-        {
-          text: 'Yes, Cancel',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await auth.authStateReady();
+    confirmAction({
+      title: 'Cancel Booking',
+      message: 'Are you sure you want to cancel this booking?',
+      confirmText: 'Yes, Cancel',
+      cancelText: 'No',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await auth.authStateReady();
 
-              const user = auth.currentUser;
+          const user = auth.currentUser;
 
-              if (!user) {
-                router.replace('/auth');
-                return;
-              }
+          if (!user) {
+            router.replace('/auth');
+            return;
+          }
 
-              const booking = bookings.find(
-                (item) => item.id === id
-              );
+          const booking = bookings.find((item) => item.id === id);
 
-              if (
-                !booking ||
-                booking.status !== 'Waiting for Provider Response'
-              ) {
-                await loadBookings();
+          if (
+            !booking ||
+            booking.status !== 'Waiting for Provider Response'
+          ) {
+            await loadBookings();
 
-                Alert.alert(
-                  'Unable to Cancel',
-                  'This booking is no longer eligible for cancellation.'
-                );
+            showMessage(
+              'Unable to Cancel',
+              'This booking is no longer eligible for cancellation.'
+            );
 
-                return;
-              }
+            return;
+          }
 
-              await updateUserBooking(user.uid, id, {
-                status: 'Cancelled',
-              });
+          await updateUserBooking(user.uid, id, {
+            status: 'Cancelled',
+          });
 
-              setExpandedBookingId(null);
+          setExpandedBookingId(null);
 
-              await loadBookings();
+          await loadBookings();
 
-              Alert.alert(
-                'Cancelled',
-                'Your booking has been cancelled successfully.'
-              );
-            } catch (error) {
-              console.log('Cancel booking error:', error);
+          showMessage(
+            'Cancelled',
+            'Your booking has been cancelled successfully.'
+          );
+        } catch (error) {
+          console.log('Cancel booking error:', error);
 
-              Alert.alert(
-                'Error',
-                'Unable to cancel your booking. Please try again.'
-              );
-            }
-          },
-        },
-      ]
-    );
+          showMessage(
+            'Error',
+            'Unable to cancel your booking. Please try again.'
+          );
+        }
+      },
+    });
   };
 
   const handleConfirmCompletion = (id: string) => {
-    Alert.alert(
-      'Confirm Work Completed',
-      'Have you checked the service and confirmed that the provider has finished the work?',
-      [
-        {
-          text: 'Not Yet',
-          style: 'cancel',
-        },
-        {
-          text: 'Yes, Confirm',
-          onPress: async () => {
-            try {
-              await auth.authStateReady();
+    confirmAction({
+      title: 'Confirm Work Completed',
+      message:
+        'Have you checked the service and confirmed that the provider has finished the work?',
+      confirmText: 'Yes, Confirm',
+      cancelText: 'Not Yet',
+      onConfirm: async () => {
+        try {
+          await auth.authStateReady();
 
-              const user = auth.currentUser;
+          const user = auth.currentUser;
 
-              if (!user) {
-                router.replace('/auth');
-                return;
-              }
+          if (!user) {
+            router.replace('/auth');
+            return;
+          }
 
-              const booking = bookings.find(
-                (item) => item.id === id
-              );
+          const booking = bookings.find((item) => item.id === id);
 
-              if (!booking || booking.status !== 'Approved') {
-                await loadBookings();
+          if (!booking || booking.status !== 'Approved') {
+            await loadBookings();
 
-                Alert.alert(
-                  'Unable to Confirm',
-                  'This booking is no longer available for completion confirmation.'
-                );
+            showMessage(
+              'Unable to Confirm',
+              'This booking is no longer available for completion confirmation.'
+            );
 
-                return;
-              }
+            return;
+          }
 
-              await updateUserBooking(user.uid, id, {
-                status: 'Completed',
-                customerCompletedAt: new Date().toISOString(),
-              });
+          await updateUserBooking(user.uid, id, {
+            status: 'Completed',
+            customerCompletedAt: new Date().toISOString(),
+          });
 
-              setExpandedBookingId(null);
+          setExpandedBookingId(null);
 
-              await loadBookings();
+          await loadBookings();
 
-              Alert.alert(
-                'Work Completed',
-                'Your booking has been marked as completed. You can now rate and review the service.'
-              );
-            } catch (error) {
-              console.log('Completion confirmation error:', error);
+          showMessage(
+            'Work Completed',
+            'Your booking has been marked as completed. You can now rate and review the service.'
+          );
+        } catch (error) {
+          console.log('Completion confirmation error:', error);
 
-              Alert.alert(
-                'Error',
-                'Unable to confirm work completion. Please try again.'
-              );
-            }
-          },
-        },
-      ]
-    );
+          showMessage(
+            'Error',
+            'Unable to confirm work completion. Please try again.'
+          );
+        }
+      },
+    });
   };
 
   // Generate the quotation PDF and save it to the phone / print on web
@@ -802,7 +817,7 @@ export default function BookingsScreen() {
     } catch (error: any) {
       console.log('PDF download error:', error);
 
-      Alert.alert(
+      showMessage(
         'PDF Error',
         String(error?.message || error)
       );

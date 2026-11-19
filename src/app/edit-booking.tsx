@@ -16,7 +16,6 @@ import {
   KeyboardAvoidingView,
   Keyboard,
   Platform,
-  TouchableWithoutFeedback,
 } from 'react-native';
 
 import { auth } from '../lib/firebase';
@@ -38,9 +37,13 @@ type BookingItem = {
   [key: string]: any;
 };
 
+type DialogButton = {
+  text: string;
+  onPress?: () => void;
+};
+
 export default function EditBookingScreen() {
   const router = useRouter();
-
   const { id } = useLocalSearchParams<{ id: string }>();
 
   const scrollViewRef = useRef<ComponentRef<typeof ScrollView>>(null);
@@ -56,33 +59,47 @@ export default function EditBookingScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // Load the selected customer's booking from Firestore
+  // Works on web and Android/iOS
+  const showMessage = (
+    title: string,
+    message: string,
+    onOk?: () => void
+  ) => {
+    if (Platform.OS === 'web') {
+      window.alert(`${title}\n\n${message}`);
+      onOk?.();
+      return;
+    }
+
+    const buttons: DialogButton[] = [
+      {
+        text: 'OK',
+        onPress: onOk,
+      },
+    ];
+
+    Alert.alert(title, message, buttons);
+  };
+
+  // Load the selected customer's booking
   useEffect(() => {
     let isActive = true;
 
     const loadBooking = async () => {
       try {
-        // Wait for Firebase to restore the login session
         await auth.authStateReady();
 
         const user = auth.currentUser;
 
         if (!user) {
-          Alert.alert(
+          showMessage(
             'Login Required',
             'Please login to edit your booking.',
-            [
-              {
-                text: 'OK',
-                onPress: () => router.replace('/auth'),
-              },
-            ]
+            () => router.replace('/auth')
           );
-
           return;
         }
 
-        // Fetch only this customer's bookings
         const bookings = await getUserBookings(user.uid);
 
         const selected = bookings.find(
@@ -90,60 +107,38 @@ export default function EditBookingScreen() {
         ) as BookingItem | undefined;
 
         if (!selected) {
-          Alert.alert(
+          showMessage(
             'Booking Not Found',
             'This booking does not belong to your account or no longer exists.',
-            [
-              {
-                text: 'OK',
-                onPress: () => router.back(),
-              },
-            ]
+            () => router.back()
           );
-
           return;
         }
 
-        if (
-          selected.status !== 'Waiting for Provider Response'
-        ) {
-          Alert.alert(
+        if (selected.status !== 'Waiting for Provider Response') {
+          showMessage(
             'Editing Unavailable',
             'This booking can no longer be edited.',
-            [
-              {
-                text: 'OK',
-                onPress: () => router.back(),
-              },
-            ]
+            () => router.back()
           );
-
           return;
         }
 
         if (isActive) {
           setBooking(selected);
-
           setDate(selected.preferredDate || '');
           setTime(selected.preferredTime || '');
           setAddress(selected.address || '');
           setLandmark(selected.landmark || '');
-          setRequirements(
-            selected.additionalRequirements || ''
-          );
+          setRequirements(selected.additionalRequirements || '');
         }
       } catch (error) {
         console.log('Loading booking error:', error);
 
-        Alert.alert(
+        showMessage(
           'Error',
           'Unable to load your booking. Please try again.',
-          [
-            {
-              text: 'OK',
-              onPress: () => router.back(),
-            },
-          ]
+          () => router.back()
         );
       } finally {
         if (isActive) {
@@ -159,43 +154,39 @@ export default function EditBookingScreen() {
     };
   }, [id, router]);
 
-  // Save updated booking to the current customer's Firestore account
+  // Save updated booking
   const handleSave = async () => {
     Keyboard.dismiss();
 
     if (!date.trim() || !time.trim() || !address.trim()) {
-      Alert.alert(
+      showMessage(
         'Missing Information',
         'Please enter the preferred date, time and address.'
       );
-
       return;
     }
 
     if (!booking) {
-      Alert.alert('Error', 'Booking information is unavailable.');
+      showMessage('Error', 'Booking information is unavailable.');
       return;
     }
 
     try {
       setSaving(true);
 
-      // Check the currently logged-in customer
       await auth.authStateReady();
 
       const user = auth.currentUser;
 
       if (!user) {
-        Alert.alert(
+        showMessage(
           'Login Required',
-          'Please login to update your booking.'
+          'Please login to update your booking.',
+          () => router.replace('/auth')
         );
-
-        router.replace('/auth');
         return;
       }
 
-      // Check the latest booking status before updating
       const latestBookings = await getUserBookings(user.uid);
 
       const latestBooking = latestBookings.find(
@@ -206,43 +197,32 @@ export default function EditBookingScreen() {
         !latestBooking ||
         latestBooking.status !== 'Waiting for Provider Response'
       ) {
-        Alert.alert(
+        showMessage(
           'Update Unavailable',
-          'This booking is no longer eligible for editing.'
+          'This booking is no longer eligible for editing.',
+          () => router.back()
         );
-
-        router.back();
         return;
       }
 
-      // Update only this customer's booking
-      await updateUserBooking(
-        user.uid,
-        id,
-        {
-          preferredDate: date.trim(),
-          preferredTime: time.trim(),
-          address: address.trim(),
-          landmark: landmark.trim(),
-          additionalRequirements: requirements.trim(),
-          updatedAt: new Date().toISOString(),
-        }
-      );
+      await updateUserBooking(user.uid, id, {
+        preferredDate: date.trim(),
+        preferredTime: time.trim(),
+        address: address.trim(),
+        landmark: landmark.trim(),
+        additionalRequirements: requirements.trim(),
+        updatedAt: new Date().toISOString(),
+      });
 
-      Alert.alert(
+      showMessage(
         'Success',
         'Your booking has been updated successfully!',
-        [
-          {
-            text: 'OK',
-            onPress: () => router.back(),
-          },
-        ]
+        () => router.back()
       );
     } catch (error) {
       console.log('Updating booking error:', error);
 
-      Alert.alert(
+      showMessage(
         'Error',
         'Unable to update your booking. Please try again.'
       );
@@ -251,19 +231,14 @@ export default function EditBookingScreen() {
     }
   };
 
-  // Loading screen
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator
-          size="large"
-          color="#B85D32"
-        />
+        <ActivityIndicator size="large" color="#B85D32" />
       </View>
     );
   }
 
-  // Booking unavailable screen
   if (!booking) {
     return (
       <View style={styles.center}>
@@ -275,9 +250,7 @@ export default function EditBookingScreen() {
           style={styles.saveButton}
           onPress={() => router.back()}
         >
-          <Text style={styles.saveButtonText}>
-            Go Back
-          </Text>
+          <Text style={styles.saveButtonText}>Go Back</Text>
         </Pressable>
       </View>
     );
@@ -289,137 +262,107 @@ export default function EditBookingScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <ScrollView
-          ref={scrollViewRef}
-          style={styles.scroll}
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          showsVerticalScrollIndicator={false}
+      <ScrollView
+        ref={scrollViewRef}
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={styles.heading}>Edit Booking</Text>
+
+        <Text style={styles.subtitle}>
+          Update your booking information
+        </Text>
+
+        <Text style={styles.service}>{booking.service}</Text>
+
+        <Text style={styles.label}>Preferred Date *</Text>
+        <TextInput
+          style={styles.input}
+          value={date}
+          onChangeText={setDate}
+          placeholder="Enter preferred date"
+          placeholderTextColor="#A9978D"
+          returnKeyType="next"
+        />
+
+        <Text style={styles.label}>Preferred Time *</Text>
+        <TextInput
+          style={styles.input}
+          value={time}
+          onChangeText={setTime}
+          placeholder="Enter preferred time"
+          placeholderTextColor="#A9978D"
+          returnKeyType="next"
+        />
+
+        <Text style={styles.label}>Full Address *</Text>
+        <TextInput
+          style={[styles.input, styles.addressInput]}
+          value={address}
+          onChangeText={setAddress}
+          placeholder="Enter your full address"
+          placeholderTextColor="#A9978D"
+          multiline
+          returnKeyType="default"
+        />
+
+        <Text style={styles.label}>Landmark</Text>
+        <TextInput
+          style={styles.input}
+          value={landmark}
+          onChangeText={setLandmark}
+          placeholder="Enter nearby landmark"
+          placeholderTextColor="#A9978D"
+          returnKeyType="next"
+        />
+
+        <Text style={styles.label}>Additional Requirements</Text>
+        <TextInput
+          style={[styles.input, styles.textArea]}
+          value={requirements}
+          onChangeText={setRequirements}
+          placeholder="Enter any additional requirements"
+          placeholderTextColor="#A9978D"
+          multiline
+          numberOfLines={4}
+          textAlignVertical="top"
+          onFocus={() => {
+            setTimeout(() => {
+              scrollViewRef.current?.scrollToEnd({
+                animated: true,
+              });
+            }, 300);
+          }}
+        />
+
+        <Pressable
+          style={[
+            styles.saveButton,
+            saving && styles.disabledButton,
+          ]}
+          onPress={handleSave}
+          disabled={saving}
         >
-          <Text style={styles.heading}>
-            Edit Booking
-          </Text>
-
-          <Text style={styles.subtitle}>
-            Update your booking information
-          </Text>
-
-          <Text style={styles.service}>
-            {booking.service}
-          </Text>
-
-          {/* Preferred Date */}
-          <Text style={styles.label}>
-            Preferred Date *
-          </Text>
-
-          <TextInput
-            style={styles.input}
-            value={date}
-            onChangeText={setDate}
-            placeholder="Enter preferred date"
-            placeholderTextColor="#A9978D"
-            returnKeyType="next"
-          />
-
-          {/* Preferred Time */}
-          <Text style={styles.label}>
-            Preferred Time *
-          </Text>
-
-          <TextInput
-            style={styles.input}
-            value={time}
-            onChangeText={setTime}
-            placeholder="Enter preferred time"
-            placeholderTextColor="#A9978D"
-            returnKeyType="next"
-          />
-
-          {/* Full Address */}
-          <Text style={styles.label}>
-            Full Address *
-          </Text>
-
-          <TextInput
-            style={[styles.input, styles.addressInput]}
-            value={address}
-            onChangeText={setAddress}
-            placeholder="Enter your full address"
-            placeholderTextColor="#A9978D"
-            multiline
-            returnKeyType="default"
-          />
-
-          {/* Landmark */}
-          <Text style={styles.label}>
-            Landmark
-          </Text>
-
-          <TextInput
-            style={styles.input}
-            value={landmark}
-            onChangeText={setLandmark}
-            placeholder="Enter nearby landmark"
-            placeholderTextColor="#A9978D"
-            returnKeyType="next"
-          />
-
-          {/* Additional Requirements */}
-          <Text style={styles.label}>
-            Additional Requirements
-          </Text>
-
-          <TextInput
-            style={[styles.input, styles.textArea]}
-            value={requirements}
-            onChangeText={setRequirements}
-            placeholder="Enter any additional requirements"
-            placeholderTextColor="#A9978D"
-            multiline
-            numberOfLines={4}
-            textAlignVertical="top"
-            onFocus={() => {
-              setTimeout(() => {
-                scrollViewRef.current?.scrollToEnd({
-                  animated: true,
-                });
-              }, 300);
-            }}
-          />
-
-          {/* Save Changes */}
-          <Pressable
-            style={[
-              styles.saveButton,
-              saving && styles.disabledButton,
-            ]}
-            onPress={handleSave}
-            disabled={saving}
-          >
-            {saving ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text style={styles.saveButtonText}>
-                Save Changes
-              </Text>
-            )}
-          </Pressable>
-
-          {/* Cancel */}
-          <Pressable
-            style={styles.cancelButton}
-            onPress={() => router.back()}
-            disabled={saving}
-          >
-            <Text style={styles.cancelButtonText}>
-              Cancel
+          {saving ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.saveButtonText}>
+              Save Changes
             </Text>
-          </Pressable>
-        </ScrollView>
-      </TouchableWithoutFeedback>
+          )}
+        </Pressable>
+
+        <Pressable
+          style={styles.cancelButton}
+          onPress={() => router.back()}
+          disabled={saving}
+        >
+          <Text style={styles.cancelButtonText}>Cancel</Text>
+        </Pressable>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
