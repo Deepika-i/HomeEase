@@ -1,3 +1,4 @@
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as FileSystem from 'expo-file-system/legacy';
 
@@ -163,6 +164,14 @@ export default function AdminDashboardScreen() {
     }
   }, [loading, fadeAnim, slideAnim]);
 
+  const showMessage = (title: string, message: string) => {
+    if (Platform.OS === 'web') {
+      window.alert(`${title}\n\n${message}`);
+    } else {
+      Alert.alert(title, message);
+    }
+  };
+
   const getBookingTime = (value: any): number => {
     if (typeof value === 'string') {
       return Date.parse(value) || 0;
@@ -295,7 +304,7 @@ export default function AdminDashboardScreen() {
     } catch (error) {
       console.log('Admin dashboard error:', error);
 
-      Alert.alert(
+      showMessage(
         'Error',
         'Unable to load customer and booking information. Please check Firestore permissions.'
       );
@@ -311,6 +320,18 @@ export default function AdminDashboardScreen() {
   );
 
   const handleLogout = () => {
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm(
+        'Are you sure you want to logout?'
+      );
+
+      if (confirmed) {
+        void logoutAdmin();
+      }
+
+      return;
+    }
+
     Alert.alert(
       'Admin Logout',
       'Are you sure you want to logout?',
@@ -319,17 +340,21 @@ export default function AdminDashboardScreen() {
         {
           text: 'Logout',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              await signOut(auth);
-              router.replace('/admin-login');
-            } catch {
-              Alert.alert('Error', 'Unable to logout. Please try again.');
-            }
+          onPress: () => {
+            void logoutAdmin();
           },
         },
       ]
     );
+  };
+
+  const logoutAdmin = async () => {
+    try {
+      await signOut(auth);
+      router.replace('/admin-login');
+    } catch {
+      showMessage('Error', 'Unable to logout. Please try again.');
+    }
   };
 
   const openConversation = (customer: CustomerConversation) => {
@@ -366,61 +391,100 @@ export default function AdminDashboardScreen() {
     );
   };
 
+  // Actual Firebase status update
+  const updateBookingStatus = async (
+    booking: AdminBooking,
+    newStatus: string
+  ) => {
+    try {
+      if (
+        !auth.currentUser ||
+        auth.currentUser.uid !== ADMIN_UID
+      ) {
+        showMessage('Error', 'Admin login required.');
+        return;
+      }
+
+      const bookingRef = doc(
+        db,
+        'users',
+        booking.userId,
+        'bookings',
+        booking.id
+      );
+
+      await updateDoc(bookingRef, {
+        status: newStatus,
+        updatedAt: new Date().toISOString(),
+      });
+
+      // Notification is separate so a notification failure
+      // does not undo the successful booking status update.
+      try {
+        await createUserNotification(booking.userId, {
+          title: 'Booking Status Updated',
+          message: `Your ${booking.service || 'service'} booking status has been updated to ${newStatus}.`,
+          type:
+            newStatus === 'Approved'
+              ? 'approved'
+              : newStatus === 'Rejected'
+                ? 'rejected'
+                : newStatus === 'Cancelled'
+                  ? 'cancelled'
+                  : 'general',
+          bookingId: booking.id,
+        });
+      } catch (notificationError) {
+        console.error(
+          'Booking notification error:',
+          notificationError
+        );
+      }
+
+      showMessage(
+        'Success',
+        `Booking status changed to ${newStatus}.`
+      );
+
+      await loadDashboard();
+    } catch (error) {
+      console.error('Status update error:', error);
+
+      showMessage(
+        'Error',
+        'Unable to update booking status. Please check your Firebase permissions.'
+      );
+    }
+  };
+
+  // Web and native confirmation
   const changeBookingStatus = (
     booking: AdminBooking,
     newStatus: string
   ) => {
+    const message =
+      `Are you sure you want to change this booking status to "${newStatus}"?`;
+
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm(message);
+
+      if (!confirmed) {
+        return;
+      }
+
+      void updateBookingStatus(booking, newStatus);
+      return;
+    }
+
     Alert.alert(
       'Confirm Status Change',
-      `Are you sure you want to change this booking status to "${newStatus}"?`,
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Confirm',
-          onPress: async () => {
-            try {
-              if (!auth.currentUser) {
-                Alert.alert('Error', 'Admin login required.');
-                return;
-              }
-
-              const bookingRef = doc(
-                db,
-                'users',
-                booking.userId,
-                'bookings',
-                booking.id
-              );
-
-              await updateDoc(bookingRef, {
-                status: newStatus,
-                updatedAt: new Date().toISOString(),
-              });
-
-              await createUserNotification(booking.userId, {
-                title: 'Booking Status Updated',
-                message: `Your ${booking.service || 'service'} booking status has been updated to ${newStatus}.`,
-                type:
-                  newStatus === 'Approved'
-                    ? 'approved'
-                    : newStatus === 'Rejected'
-                      ? 'rejected'
-                      : newStatus === 'Cancelled'
-                        ? 'cancelled'
-                        : 'general',
-                bookingId: booking.id,
-              });
-
-              Alert.alert(
-                'Success',
-                `Booking status changed to ${newStatus}.`
-              );
-
-              await loadDashboard();
-            } catch (error) {
-              console.error('Status update error:', error);
-              Alert.alert('Error', 'Unable to update booking status.');
-            }
+          onPress: () => {
+            void updateBookingStatus(booking, newStatus);
           },
         },
       ]
@@ -500,7 +564,7 @@ export default function AdminDashboardScreen() {
 
   const sendQuotation = async () => {
     if (!quotationBooking) {
-      Alert.alert('Error', 'No booking selected.');
+      showMessage('Error', 'No booking selected.');
       return;
     }
 
@@ -517,7 +581,7 @@ export default function AdminDashboardScreen() {
       );
 
     if (validItems.length === 0) {
-      Alert.alert(
+      showMessage(
         'Missing Details',
         'Please add at least one quotation item with a valid amount.'
       );
@@ -525,88 +589,122 @@ export default function AdminDashboardScreen() {
     }
 
     if (!workDescription.trim()) {
-      Alert.alert('Missing Details', 'Please enter the work description.');
+      showMessage(
+        'Missing Details',
+        'Please enter the work description.'
+      );
       return;
     }
 
     if (!estimatedDuration.trim()) {
-      Alert.alert('Missing Details', 'Please enter the estimated duration.');
+      showMessage(
+        'Missing Details',
+        'Please enter the estimated duration.'
+      );
       return;
     }
 
     const booking = quotationBooking;
 
+    const submitQuotation = async () => {
+      try {
+        if (
+          !auth.currentUser ||
+          auth.currentUser.uid !== ADMIN_UID
+        ) {
+          showMessage('Error', 'Admin login required.');
+          return;
+        }
+
+        const now = new Date().toISOString();
+
+        const newQuotation: QuotationData = {
+          version: (booking.quotation?.version || 0) + 1,
+          items: validItems,
+          totalAmount: validItems.reduce(
+            (total, item) => total + item.amount,
+            0
+          ),
+          workDescription: workDescription.trim(),
+          estimatedDuration: estimatedDuration.trim(),
+          warranty: warranty.trim(),
+          createdAt: now,
+        };
+
+        const previousHistory = booking.quotationHistory || [];
+
+        const updatedHistory = booking.quotation
+          ? [...previousHistory, booking.quotation]
+          : previousHistory;
+
+        const bookingRef = doc(
+          db,
+          'users',
+          booking.userId,
+          'bookings',
+          booking.id
+        );
+
+        await updateDoc(bookingRef, {
+          quotation: newQuotation,
+          quotationHistory: updatedHistory,
+          quotationStatus: 'Sent',
+          quotationResponseAt: null,
+          updatedAt: now,
+        });
+
+        try {
+          await createUserNotification(booking.userId, {
+            title: 'Quotation Received',
+            message: `Your quotation for ${booking.service || 'your service'} is ready. Total amount: ₹${newQuotation.totalAmount?.toLocaleString('en-IN')}.`,
+            type: 'quotation',
+            bookingId: booking.id,
+          });
+        } catch (notificationError) {
+          console.error(
+            'Quotation notification error:',
+            notificationError
+          );
+        }
+
+        setQuotationModalVisible(false);
+        setQuotationBooking(null);
+
+        showMessage('Success', 'Quotation sent successfully.');
+
+        await loadDashboard();
+      } catch (error) {
+        console.error('Send quotation error:', error);
+
+        showMessage(
+          'Error',
+          'Unable to send quotation. Please try again.'
+        );
+      }
+    };
+
+    const confirmationMessage =
+      `Send quotation for ₹${quotationTotal.toLocaleString('en-IN')}?`;
+
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm(confirmationMessage);
+
+      if (confirmed) {
+        await submitQuotation();
+      }
+
+      return;
+    }
+
     Alert.alert(
       'Send Quotation',
-      `Send quotation for ₹${quotationTotal.toLocaleString('en-IN')}?`,
+      confirmationMessage,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Send',
-          onPress: async () => {
-            try {
-              if (!auth.currentUser) {
-                Alert.alert('Error', 'Admin login required.');
-                return;
-              }
-
-              const now = new Date().toISOString();
-
-              const newQuotation: QuotationData = {
-                version: (booking.quotation?.version || 0) + 1,
-                items: validItems,
-                totalAmount: validItems.reduce(
-                  (total, item) => total + item.amount,
-                  0
-                ),
-                workDescription: workDescription.trim(),
-                estimatedDuration: estimatedDuration.trim(),
-                warranty: warranty.trim(),
-                createdAt: now,
-              };
-
-              const previousHistory = booking.quotationHistory || [];
-
-              const updatedHistory = booking.quotation
-                ? [...previousHistory, booking.quotation]
-                : previousHistory;
-
-              const bookingRef = doc(
-                db,
-                'users',
-                booking.userId,
-                'bookings',
-                booking.id
-              );
-
-              await updateDoc(bookingRef, {
-                quotation: newQuotation,
-                quotationHistory: updatedHistory,
-                quotationStatus: 'Sent',
-                quotationResponseAt: null,
-                updatedAt: now,
-              });
-
-              await createUserNotification(booking.userId, {
-                title: 'Quotation Received',
-                message: `Your quotation for ${booking.service || 'your service'} is ready. Total amount: ₹${newQuotation.totalAmount?.toLocaleString('en-IN')}.`,
-                type: 'quotation',
-                bookingId: booking.id,
-              });
-
-              setQuotationModalVisible(false);
-              setQuotationBooking(null);
-
-              Alert.alert('Success', 'Quotation sent successfully.');
-
-              await loadDashboard();
-            } catch (error) {
-              console.error('Send quotation error:', error);
-              Alert.alert(
-                'Error',
-                'Unable to send quotation. Please try again.'
-              );
-            }
+          onPress: () => {
+            void submitQuotation();
           },
         },
       ]
@@ -715,7 +813,7 @@ export default function AdminDashboardScreen() {
 
   const handleDownloadQuotation = async (booking: AdminBooking) => {
     if (!booking.quotation) {
-      Alert.alert(
+      showMessage(
         'Quotation Not Found',
         'This booking does not have a quotation.'
       );
@@ -932,7 +1030,7 @@ export default function AdminDashboardScreen() {
         return;
       }
 
-      // base64: true => no need to read the cache file again
+      // Android: save PDF directly into the selected folder
       const pdf = await Print.printToFileAsync({
         html,
         base64: true,
@@ -941,7 +1039,10 @@ export default function AdminDashboardScreen() {
       const base64Data = pdf.base64;
 
       if (!base64Data) {
-        Alert.alert('PDF Error', 'Unable to create the quotation PDF.');
+        showMessage(
+          'PDF Error',
+          'Unable to create the quotation PDF.'
+        );
         return;
       }
 
@@ -961,7 +1062,7 @@ export default function AdminDashboardScreen() {
           await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
 
         if (!permission.granted || !permission.directoryUri) {
-          Alert.alert(
+          showMessage(
             'Permission Required',
             'Please select a folder (for example Documents or a new "HomeEase" folder) to save the quotation PDF.'
           );
@@ -970,7 +1071,10 @@ export default function AdminDashboardScreen() {
 
         directoryUri = permission.directoryUri;
 
-        await FileSystem.writeAsStringAsync(permissionFile, directoryUri);
+        await FileSystem.writeAsStringAsync(
+          permissionFile,
+          directoryUri
+        );
       }
 
       try {
@@ -985,21 +1089,20 @@ export default function AdminDashboardScreen() {
           encoding: FileSystem.EncodingType.Base64,
         });
 
-        Alert.alert(
+        showMessage(
           'PDF Saved',
           `Quotation PDF saved successfully:\n${filename}`
         );
       } catch (saveError) {
         console.error('PDF save error:', saveError);
 
-        // Reset the saved folder permission if it is no longer valid
         try {
           await FileSystem.deleteAsync(permissionFile, {
             idempotent: true,
           });
         } catch {}
 
-        Alert.alert(
+        showMessage(
           'Unable to Save PDF',
           'Please tap Download PDF again and select a folder again.'
         );
@@ -1007,7 +1110,7 @@ export default function AdminDashboardScreen() {
     } catch (error) {
       console.error('Quotation PDF error:', error);
 
-      Alert.alert(
+      showMessage(
         'PDF Error',
         'Unable to create the quotation PDF. Please try again.'
       );
@@ -1209,26 +1312,38 @@ export default function AdminDashboardScreen() {
                   {booking.status !== 'Approved' && (
                     <Pressable
                       style={styles.approveButton}
-                      onPress={() => changeBookingStatus(booking, 'Approved')}
+                      onPress={() =>
+                        changeBookingStatus(booking, 'Approved')
+                      }
                     >
-                      <Text style={styles.actionButtonText}>Approve</Text>
+                      <Text style={styles.actionButtonText}>
+                        Approve
+                      </Text>
                     </Pressable>
                   )}
 
                   {booking.status !== 'Rejected' && (
                     <Pressable
                       style={styles.rejectButton}
-                      onPress={() => changeBookingStatus(booking, 'Rejected')}
+                      onPress={() =>
+                        changeBookingStatus(booking, 'Rejected')
+                      }
                     >
-                      <Text style={styles.actionButtonText}>Reject</Text>
+                      <Text style={styles.actionButtonText}>
+                        Reject
+                      </Text>
                     </Pressable>
                   )}
 
                   <Pressable
                     style={styles.completeButton}
-                    onPress={() => changeBookingStatus(booking, 'Completed')}
+                    onPress={() =>
+                      changeBookingStatus(booking, 'Completed')
+                    }
                   >
-                    <Text style={styles.actionButtonText}>Complete</Text>
+                    <Text style={styles.actionButtonText}>
+                      Complete
+                    </Text>
                   </Pressable>
                 </View>
               )}
