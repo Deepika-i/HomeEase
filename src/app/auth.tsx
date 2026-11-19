@@ -62,7 +62,16 @@ export default function AuthScreen() {
 
   const isLogin = mode === 'login';
 
-  // Scroll the focused field into view
+  // Show messages on web and Android
+  const showMessage = (title: string, message: string) => {
+    if (Platform.OS === 'web') {
+      window.alert(`${title}\n\n${message}`);
+    } else {
+      Alert.alert(title, message);
+    }
+  };
+
+  // Scroll focused field into view
   const handleInputFocus = () => {
     setTimeout(() => {
       scrollViewRef.current?.scrollToEnd({
@@ -73,28 +82,29 @@ export default function AuthScreen() {
 
   // Login or Signup
   const handleAuth = async () => {
-    if (!email.trim() || !password) {
-      Alert.alert(
+    const normalizedEmail = email.trim();
+
+    if (!normalizedEmail || !password) {
+      showMessage(
         'Missing Details',
         'Please enter your email and password.'
       );
       return;
     }
 
-    if (!email.trim().includes('@')) {
-      Alert.alert(
+    if (!normalizedEmail.includes('@')) {
+      showMessage(
         'Invalid Email',
         'Please enter a valid email address.'
       );
       return;
     }
 
-    // Signup validation
     const normalizedPhone = phone.replace(/\D/g, '');
 
     if (mode === 'signup') {
       if (!/^[6-9]\d{9}$/.test(normalizedPhone)) {
-        Alert.alert(
+        showMessage(
           'Invalid Phone Number',
           'Please enter a valid 10-digit Indian mobile number.'
         );
@@ -102,7 +112,7 @@ export default function AuthScreen() {
       }
 
       if (password.length < 6) {
-        Alert.alert(
+        showMessage(
           'Weak Password',
           'Password must contain at least 6 characters.'
         );
@@ -110,7 +120,7 @@ export default function AuthScreen() {
       }
 
       if (password !== confirmPassword) {
-        Alert.alert(
+        showMessage(
           'Password Mismatch',
           'Passwords do not match.'
         );
@@ -125,12 +135,12 @@ export default function AuthScreen() {
       const credential = isLogin
         ? await signInWithEmailAndPassword(
             auth,
-            email.trim(),
+            normalizedEmail,
             password
           )
         : await createUserWithEmailAndPassword(
             auth,
-            email.trim(),
+            normalizedEmail,
             password
           );
 
@@ -146,7 +156,7 @@ export default function AuthScreen() {
       if (!isLogin) {
         const profileData: Record<string, string> = {
           phone: normalizedPhone,
-          email: user.email || email.trim(),
+          email: user.email || normalizedEmail,
           updatedAt: new Date().toISOString(),
         };
 
@@ -161,14 +171,14 @@ export default function AuthScreen() {
         );
       }
 
-      // Step 4: Save booking under this customer's UID
+      // Step 4: Save booking under customer's UID
       if (pendingBooking) {
         await saveUserBooking(
           user.uid,
           pendingBooking
         );
 
-        // Step 5: Clear temporary draft after successful saving
+        // Step 5: Clear temporary booking draft
         await clearBookingDraft();
 
         // Step 6: Navigate to booking confirmation
@@ -185,12 +195,11 @@ export default function AuthScreen() {
           },
         });
       } else {
-        Alert.alert(
+        showMessage(
           'Welcome to HomeEase!',
           'You have successfully logged in.'
         );
 
-        // Safely navigate after login
         if (router.canGoBack()) {
           router.back();
         } else {
@@ -216,19 +225,16 @@ export default function AuthScreen() {
           break;
 
         case 'auth/invalid-credential':
-          message = 'Invalid email or password.';
-          break;
-
-        case 'auth/user-not-found':
-          message = 'No account found with this email address.';
-          break;
-
+        case 'auth/invalid-login-credentials':
         case 'auth/wrong-password':
-          message = 'Incorrect password. Please try again.';
+        case 'auth/user-not-found':
+          message =
+            'Invalid email or password. Please check your details and try again.';
           break;
 
         case 'auth/network-request-failed':
-          message = 'Please check your internet connection.';
+          message =
+            'Please check your internet connection and try again.';
           break;
 
         case 'permission-denied':
@@ -238,11 +244,12 @@ export default function AuthScreen() {
           break;
 
         case 'auth/too-many-requests':
-          message = 'Too many attempts. Please try again later.';
+          message =
+            'Too many attempts. Please try again later.';
           break;
       }
 
-      Alert.alert('Unable to Continue', message);
+      showMessage('Unable to Continue', message);
     } finally {
       setLoading(false);
     }
@@ -250,10 +257,20 @@ export default function AuthScreen() {
 
   // Forgot Password
   const handleForgotPassword = async () => {
-    if (!email.trim()) {
-      Alert.alert(
+    const normalizedEmail = email.trim();
+
+    if (!normalizedEmail) {
+      showMessage(
         'Email Required',
         'Enter your email address first.'
+      );
+      return;
+    }
+
+    if (!normalizedEmail.includes('@')) {
+      showMessage(
+        'Invalid Email',
+        'Please enter a valid email address.'
       );
       return;
     }
@@ -261,22 +278,63 @@ export default function AuthScreen() {
     try {
       setLoading(true);
 
+      console.log('Sending password reset email to:', normalizedEmail);
+
       await sendPasswordResetEmail(
         auth,
-        email.trim()
+        normalizedEmail
       );
 
-      Alert.alert(
+      console.log('Password reset request completed.');
+
+      showMessage(
         'Reset Email Sent',
-        'Check your email for the password reset link.'
+        'If an account exists for this email, Firebase will send a password reset link. Please check your Inbox, Spam and All Mail folders.'
       );
     } catch (error: any) {
-      Alert.alert(
-        'Error',
-        error.code === 'auth/invalid-email'
-          ? 'Please enter a valid email address.'
-          : 'Unable to send the reset email. Please try again.'
-      );
+      console.log('Password reset error code:', error.code);
+      console.log('Password reset error message:', error.message);
+
+      let message =
+        'Unable to send the reset email. Please try again.';
+
+      switch (error.code) {
+        case 'auth/invalid-email':
+          message = 'Please enter a valid email address.';
+          break;
+
+        case 'auth/user-not-found':
+          message =
+            'No account was found with this email address.';
+          break;
+
+        case 'auth/network-request-failed':
+          message =
+            'Network error. Please check your internet connection and try again.';
+          break;
+
+        case 'auth/too-many-requests':
+          message =
+            'Too many attempts. Please try again later.';
+          break;
+
+        case 'auth/unauthorized-domain':
+          message =
+            'Your website domain is not authorized in Firebase Authentication. Please add your Vercel domain to Authorized Domains.';
+          break;
+
+        case 'auth/operation-not-allowed':
+          message =
+            'Email and password authentication is not enabled in Firebase.';
+          break;
+
+        default:
+          message =
+            `Password reset failed (${error.code || 'unknown error'}). Please try again.`;
+          break;
+      }
+
+      showMessage('Password Reset Error', message);
     } finally {
       setLoading(false);
     }
@@ -295,7 +353,7 @@ export default function AuthScreen() {
         keyboardDismissMode="none"
         showsVerticalScrollIndicator={false}
       >
-        {/* Back to Home Button */}
+        {/* Back to Home */}
         <Pressable
           style={styles.backButton}
           onPress={() => router.replace('/(tabs)')}
@@ -348,7 +406,7 @@ export default function AuthScreen() {
             returnKeyType="next"
           />
 
-          {/* Phone Number - Signup Only */}
+          {/* Phone - Signup Only */}
           {!isLogin && (
             <>
               <Text style={styles.label}>Phone Number</Text>

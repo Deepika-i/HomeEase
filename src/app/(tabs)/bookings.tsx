@@ -173,7 +173,11 @@ const escapeHtml = (text: unknown) =>
     .replace(/>/g, '&gt;');
 
 // Build the HTML used to generate the quotation PDF
-const buildQuotationHtml = (item: BookingItem, quotation: Quotation) => {
+const buildQuotationHtml = (
+  item: BookingItem,
+  quotation: Quotation,
+  title = 'HomeEase Quotation'
+) => {
   const rows = (quotation.items || [])
     .map(
       (q) => `
@@ -184,10 +188,11 @@ const buildQuotationHtml = (item: BookingItem, quotation: Quotation) => {
     )
     .join('');
 
-  return `
+  return `<!DOCTYPE html>
   <html>
     <head>
       <meta charset="utf-8" />
+      <title>${escapeHtml(title)}</title>
       <style>
         body { font-family: Arial, sans-serif; padding: 28px; color: #392D28; }
         h1 { color: #B85D32; margin-bottom: 0; }
@@ -195,7 +200,8 @@ const buildQuotationHtml = (item: BookingItem, quotation: Quotation) => {
         h3 { margin-bottom: 4px; margin-top: 20px; color: #B85D32; }
         table { width: 100%; border-collapse: collapse; margin-top: 8px; }
         td, th { padding: 9px 6px; border-bottom: 1px solid #EAD8C9; font-size: 14px; }
-        th { text-align: left; background: #FFF1E5; }
+        th { text-align: left; background: #FFF1E5;
+             -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         .total { text-align: right; font-size: 18px; font-weight: bold;
                  color: #B85D32; margin-top: 14px; }
       </style>
@@ -663,7 +669,7 @@ export default function BookingsScreen() {
     );
   };
 
-  // Generate the quotation PDF and save it to the phone
+  // Generate the quotation PDF and save it to the phone / print on web
   const handleDownloadQuotationPdf = async (item: BookingItem) => {
     const quotation = item.quotation;
 
@@ -674,11 +680,61 @@ export default function BookingsScreen() {
     try {
       setDownloadingPdfId(item.id);
 
+      const fileName = `Quotation_${item.id}_v${quotation.version || 1}`
+        .replace(/[^a-zA-Z0-9_-]/g, '_');
+
+      // Web (Vercel): print ONLY the quotation HTML, not the whole page.
+      // expo-print does not support printToFileAsync on web, and its
+      // printAsync prints the current page, so we use a hidden iframe.
+      if (Platform.OS === 'web') {
+        const iframe = document.createElement('iframe');
+        iframe.style.position = 'fixed';
+        iframe.style.right = '0';
+        iframe.style.bottom = '0';
+        iframe.style.width = '0';
+        iframe.style.height = '0';
+        iframe.style.border = '0';
+
+        document.body.appendChild(iframe);
+
+        const frameWindow = iframe.contentWindow;
+        const frameDoc = frameWindow?.document;
+
+        if (!frameWindow || !frameDoc) {
+          document.body.removeChild(iframe);
+          window.alert('Unable to open the print preview.');
+          return;
+        }
+
+        frameDoc.open();
+        frameDoc.write(buildQuotationHtml(item, quotation, fileName));
+        frameDoc.close();
+
+        // Chrome uses the page title as the default PDF file name
+        const previousTitle = document.title;
+        document.title = fileName;
+
+        setTimeout(() => {
+          frameWindow.focus();
+          frameWindow.print();
+
+          setTimeout(() => {
+            document.title = previousTitle;
+
+            if (iframe.parentNode) {
+              iframe.parentNode.removeChild(iframe);
+            }
+          }, 1000);
+        }, 300);
+
+        return;
+      }
+
       // Ask expo-print for the PDF data (base64) directly, so we never
       // have to read its temporary file (that file is not readable on
       // some Android / Expo Go setups).
       const printResult = await Print.printToFileAsync({
-        html: buildQuotationHtml(item, quotation),
+        html: buildQuotationHtml(item, quotation, fileName),
         base64: true,
       });
 
@@ -687,9 +743,6 @@ export default function BookingsScreen() {
       if (!base64) {
         throw new Error('PDF data was empty. Please try again.');
       }
-
-      const fileName = `Quotation_${item.id}_v${quotation.version || 1}`
-        .replace(/[^a-zA-Z0-9_-]/g, '_');
 
       // Write our own copy of the PDF into the app cache folder
       const pdfUri = `${FileSystem.cacheDirectory}${fileName}.pdf`;

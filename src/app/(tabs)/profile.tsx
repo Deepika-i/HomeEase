@@ -10,6 +10,7 @@ import {
   Alert,
   ActivityIndicator,
   Animated,
+  Platform,
 } from 'react-native';
 
 import {
@@ -150,10 +151,16 @@ export default function ProfileScreen() {
     } catch (error) {
       console.log('Profile loading error:', error);
 
-      Alert.alert(
-        'Error',
-        'Unable to load your profile information.'
-      );
+      if (Platform.OS === 'web') {
+        window.alert(
+          'Unable to load your profile information.'
+        );
+      } else {
+        Alert.alert(
+          'Error',
+          'Unable to load your profile information.'
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -169,17 +176,25 @@ export default function ProfileScreen() {
   // Save profile information to Firestore
   const handleSave = async () => {
     if (!name.trim()) {
-      Alert.alert('Required', 'Please enter your name.');
+      if (Platform.OS === 'web') {
+        window.alert('Please enter your name.');
+      } else {
+        Alert.alert('Required', 'Please enter your name.');
+      }
       return;
     }
 
     const currentUser = auth.currentUser;
 
     if (!currentUser) {
-      Alert.alert(
-        'Login Required',
-        'Please login to update your profile.'
-      );
+      if (Platform.OS === 'web') {
+        window.alert('Please login to update your profile.');
+      } else {
+        Alert.alert(
+          'Login Required',
+          'Please login to update your profile.'
+        );
+      }
 
       router.push('/auth');
       return;
@@ -208,17 +223,27 @@ export default function ProfileScreen() {
       setName(name.trim());
       setEditing(false);
 
-      Alert.alert(
-        'Success',
-        'Profile updated successfully!'
-      );
+      if (Platform.OS === 'web') {
+        window.alert('Profile updated successfully!');
+      } else {
+        Alert.alert(
+          'Success',
+          'Profile updated successfully!'
+        );
+      }
     } catch (error) {
       console.log('Profile saving error:', error);
 
-      Alert.alert(
-        'Error',
-        'Unable to update your profile. Please try again.'
-      );
+      if (Platform.OS === 'web') {
+        window.alert(
+          'Unable to update your profile. Please try again.'
+        );
+      } else {
+        Alert.alert(
+          'Error',
+          'Unable to update your profile. Please try again.'
+        );
+      }
     } finally {
       setSaving(false);
     }
@@ -226,6 +251,47 @@ export default function ProfileScreen() {
 
   // Logout
   const handleLogout = () => {
+    const performLogout = async () => {
+      try {
+        await signOut(auth);
+
+        setUser(null);
+        setName('Guest');
+        setEmail('');
+        setPhone('');
+        setEditing(false);
+
+        router.replace('/(tabs)');
+      } catch (error) {
+        console.log('Logout error:', error);
+
+        if (Platform.OS === 'web') {
+          window.alert(
+            'Unable to logout. Please try again.'
+          );
+        } else {
+          Alert.alert(
+            'Error',
+            'Unable to logout. Please try again.'
+          );
+        }
+      }
+    };
+
+    // Web confirmation
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm(
+        'Are you sure you want to logout?'
+      );
+
+      if (confirmed) {
+        void performLogout();
+      }
+
+      return;
+    }
+
+    // Android / iOS confirmation
     Alert.alert(
       'Logout',
       'Are you sure you want to logout?',
@@ -237,25 +303,8 @@ export default function ProfileScreen() {
         {
           text: 'Logout',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              await signOut(auth);
-
-              setUser(null);
-              setName('Guest');
-              setEmail('');
-              setPhone('');
-              setEditing(false);
-
-              router.replace('/(tabs)');
-            } catch (error) {
-              console.log('Logout error:', error);
-
-              Alert.alert(
-                'Error',
-                'Unable to logout. Please try again.'
-              );
-            }
+          onPress: () => {
+            void performLogout();
           },
         },
       ]
@@ -275,17 +324,28 @@ export default function ProfileScreen() {
       icon: '📍',
       action: () => {
         if (!auth.currentUser) {
-          Alert.alert(
-            'Login Required',
-            'Please login to manage your saved addresses.',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Login',
-                onPress: () => router.push('/auth'),
-              },
-            ]
-          );
+          if (Platform.OS === 'web') {
+            const confirmed = window.confirm(
+              'Please login to manage your saved addresses. Login now?'
+            );
+
+            if (confirmed) {
+              router.push('/auth');
+            }
+          } else {
+            Alert.alert(
+              'Login Required',
+              'Please login to manage your saved addresses.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Login',
+                  onPress: () => router.push('/auth'),
+                },
+              ]
+            );
+          }
+
           return;
         }
 
@@ -296,11 +356,16 @@ export default function ProfileScreen() {
       title: 'About HomeEase',
       subtitle: 'Learn more about our services',
       icon: '🏠',
-      action: () =>
-        Alert.alert(
-          'About HomeEase',
-          'HomeEase – Your Home, Our Care.'
-        ),
+      action: () => {
+        if (Platform.OS === 'web') {
+          window.alert('HomeEase – Your Home, Our Care.');
+        } else {
+          Alert.alert(
+            'About HomeEase',
+            'HomeEase – Your Home, Our Care.'
+          );
+        }
+      },
     },
     {
       title: 'Help & Support',

@@ -1,4 +1,3 @@
-
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as FileSystem from 'expo-file-system/legacy';
 
@@ -849,6 +848,7 @@ export default function AdminDashboardScreen() {
         <html>
           <head>
             <meta charset="UTF-8" />
+            <title>${escapeHtml(filename.replace(/\.pdf$/i, ''))}</title>
             <style>
               body {
                 font-family: Arial, sans-serif;
@@ -896,6 +896,8 @@ export default function AdminDashboardScreen() {
                 padding: 11px;
                 text-align: left;
                 font-size: 13px;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
               }
               td {
                 border: 1px solid #E8D8CC;
@@ -1023,6 +1025,53 @@ export default function AdminDashboardScreen() {
           </body>
         </html>
       `;
+
+      // Web (Vercel): print ONLY the quotation HTML, not the dashboard page.
+      // expo-print's printAsync calls window.print() on web, which prints
+      // the current page, so we use a hidden iframe instead.
+      if (Platform.OS === 'web') {
+        const iframe = document.createElement('iframe');
+        iframe.style.position = 'fixed';
+        iframe.style.right = '0';
+        iframe.style.bottom = '0';
+        iframe.style.width = '0';
+        iframe.style.height = '0';
+        iframe.style.border = '0';
+
+        document.body.appendChild(iframe);
+
+        const frameWindow = iframe.contentWindow;
+        const frameDoc = frameWindow?.document;
+
+        if (!frameWindow || !frameDoc) {
+          document.body.removeChild(iframe);
+          showMessage('PDF Error', 'Unable to open the print preview.');
+          return;
+        }
+
+        frameDoc.open();
+        frameDoc.write(html);
+        frameDoc.close();
+
+        // Chrome uses the page title as the default PDF file name
+        const previousTitle = document.title;
+        document.title = filename.replace(/\.pdf$/i, '');
+
+        setTimeout(() => {
+          frameWindow.focus();
+          frameWindow.print();
+
+          setTimeout(() => {
+            document.title = previousTitle;
+
+            if (iframe.parentNode) {
+              iframe.parentNode.removeChild(iframe);
+            }
+          }, 1000);
+        }, 300);
+
+        return;
+      }
 
       // iOS: print / share dialog
       if (Platform.OS !== 'android') {
