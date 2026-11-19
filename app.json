@@ -19,7 +19,7 @@
       "package": "com.deepika_04.HomeEase"
     },
     "web": {
-      "output": "single",
+      "output": "s",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [

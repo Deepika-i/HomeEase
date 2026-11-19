@@ -7,7 +7,12 @@ import {
 } from 'expo-router';
 
 import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native';
+import {
+  useColorScheme,
+  View,
+  Platform,
+  StyleSheet,
+} from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 
@@ -22,44 +27,66 @@ export default function RootLayout() {
     >
       <AnimatedSplashOverlay />
 
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          animation: 'slide_from_right',
-          animationDuration: 300,
-          gestureEnabled: true,
-        }}
+      <View
+        style={
+          Platform.OS === 'web'
+            ? styles.webAppContainer
+            : styles.nativeAppContainer
+        }
       >
-        {/* Customer Tabs */}
-        <Stack.Screen name="(tabs)" />
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            animation: 'slide_from_right',
+            animationDuration: 300,
+            gestureEnabled: true,
+          }}
+        >
+          {/* Customer Tabs */}
+          <Stack.Screen name="(tabs)" />
 
-        {/* Service Details */}
-        <Stack.Screen name="service-details" />
+          {/* Service Details */}
+          <Stack.Screen name="service-details" />
 
-        {/* Booking */}
-        <Stack.Screen name="booking" />
+          {/* Booking */}
+          <Stack.Screen name="booking" />
 
-        {/* Customer Authentication */}
-        <Stack.Screen name="auth" />
+          {/* Customer Authentication */}
+          <Stack.Screen name="auth" />
 
-        {/* Booking Confirmation */}
-        <Stack.Screen name="booking-confirmation" />
+          {/* Booking Confirmation */}
+          <Stack.Screen name="booking-confirmation" />
 
-        {/* Edit Booking */}
-        <Stack.Screen name="edit-booking" />
+          {/* Edit Booking */}
+          <Stack.Screen name="edit-booking" />
 
-        {/* Customer Support Chat */}
-        <Stack.Screen name="support-chat" />
+          {/* Customer Support Chat */}
+          <Stack.Screen name="support-chat" />
 
-        {/* Admin Login */}
-        <Stack.Screen name="admin-login" />
+          {/* Admin Login */}
+          <Stack.Screen name="admin-login" />
 
-        {/* Admin Dashboard */}
-        <Stack.Screen name="admin-dashboard" />
+          {/* Admin Dashboard */}
+          <Stack.Screen name="admin-dashboard" />
 
-        {/* Admin Chat */}
-        <Stack.Screen name="admin-chat" />
-      </Stack>
+          {/* Admin Chat */}
+          <Stack.Screen name="admin-chat" />
+        </Stack>
+      </View>
     </ThemeProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  nativeAppContainer: {
+    flex: 1,
+  },
+
+  webAppContainer: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 430,
+    alignSelf: 'center',
+    backgroundColor: '#FFF1E5',
+  },
+});
